@@ -1,42 +1,61 @@
-# app.py
-import gradio as gr
-import joblib
-from utils import clean_text
-import os
+import streamlit as st
+import numpy as np
+import re
+import pandas as pd
+from nltk.corpus import stopwords
+from nltk.stem.porter import PorterStemmer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
 
-MODEL_PATH = "model.pkl"
-VEC_PATH = "vectorizer.pkl"
+# Load data
+news_df = pd.read_csv('train.csv')
+news_df = news_df.fillna(' ')
+news_df['content'] = news_df['author'] + ' ' + news_df['title']
+X = news_df.drop('label', axis=1)
+y = news_df['label']
 
-def load_models():
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(VEC_PATH):
-        return None, None
-    model = joblib.load(MODEL_PATH)
-    vec = joblib.load(VEC_PATH)
-    return model, vec
+# Define stemming function
+ps = PorterStemmer()
+def stemming(content):
+    stemmed_content = re.sub('[^a-zA-Z]',' ',content)
+    stemmed_content = stemmed_content.lower()
+    stemmed_content = stemmed_content.split()
+    stemmed_content = [ps.stem(word) for word in stemmed_content if not word in stopwords.words('english')]
+    stemmed_content = ' '.join(stemmed_content)
+    return stemmed_content
 
-model, vectorizer = load_models()
+# Apply stemming function to content column
+news_df['content'] = news_df['content'].apply(stemming)
 
-def predict(text):
-    if model is None or vectorizer is None:
-        return "Model not found. Please upload model.pkl and vectorizer.pkl to the repo or train the model."
-    cleaned = clean_text(text)
-    vec = vectorizer.transform([cleaned])
-    pred = model.predict(vec)[0]
-    proba = None
-    if hasattr(model, "predict_proba"):
-        proba = float(model.predict_proba(vec)[0].max())
-    label = "REAL" if int(pred) == 1 else "FAKE"
-    if proba:
-        return f"{label} (confidence {proba*100:.1f}%)"
-    return label
+# Vectorize data
+X = news_df['content'].values
+y = news_df['label'].values
+vector = TfidfVectorizer()
+vector.fit(X)
+X = vector.transform(X)
 
-demo = gr.Interface(
-    fn=predict,
-    inputs=gr.Textbox(lines=6, placeholder="Paste news text here..."),
-    outputs="text",
-    title="Fake News Detector",
-    description="Detect whether a news text is REAL or FAKE."
-)
+# Split data into train and test sets
+X_train, X_test, Y_train, Y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=2)
 
-if __name__ == "__main__":
-    demo.launch()
+# Fit logistic regression model
+model = LogisticRegression()
+model.fit(X_train,Y_train)
+
+
+# website
+st.title('Fake News Detector')
+input_text = st.text_input('Enter news Article')
+
+def prediction(input_text):
+    input_data = vector.transform([input_text])
+    prediction = model.predict(input_data)
+    return prediction[0]
+
+if input_text:
+    pred = prediction(input_text)
+    if pred == 1:
+        st.write('The News is Fake')
+    else:
+        st.write('The News Is Real')
